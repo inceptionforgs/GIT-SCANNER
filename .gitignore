@@ -1,0 +1,7 @@
+/target
+.env
+*.log
+.idea/
+.vscode/
+.DS_Store
+Cargo.lock
