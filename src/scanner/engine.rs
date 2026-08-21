@@ -56,7 +56,6 @@ impl ScanEngine {
     async fn process_event(&self, event: GitHubEvent, fetcher: CommitFetcher) {
         let repo_name = event.repo.name.clone();
         
-        // Sirf PushEvent process karo
         if event.event_type != "PushEvent" {
             return;
         }
@@ -65,6 +64,8 @@ impl ScanEngine {
         
         let commits = fetcher.fetch_commits(&event).await;
         
+        info!("📝 Processing {} commits", commits.len());
+        
         for commit_with_repo in commits {
             let repo = commit_with_repo.repo_name.clone();
             let commit = commit_with_repo.commit;
@@ -72,31 +73,49 @@ impl ScanEngine {
             
             let files = match &commit.files {
                 Some(files) => files,
-                None => continue,
+                None => {
+                    warn!("⚠️ No files in commit {}", commit_sha);
+                    continue;
+                }
             };
             
+            info!("📄 Found {} files in commit", files.len());
+            
             for file in files {
-                if !should_scan_file(&file.filename) {
+                info!("📄 File: {} (status: {:?})", file.filename, file.status);
+                
+                let should_scan = should_scan_file(&file.filename);
+                info!("🔍 Should scan {}: {}", file.filename, should_scan);
+                
+                if !should_scan {
                     continue;
                 }
                 
-                if let Some(patch) = &file.patch {
-                    let secrets = self.matcher.scan_content(patch);
-                    
-                    if !secrets.is_empty() {
-                        for secret in secrets {
-                            info!("🔑 SECRET FOUND in {} ({})", file.filename, repo);
-                            
-                            self.telegram.send_secret_found(
-                                &repo,
-                                &commit_sha,
-                                &file.filename,
-                                &secret.secret_type.to_string(),
-                                &secret.value,
-                            ).await;
-                            
-                            self.process_secret(secret).await;
+                match &file.patch {
+                    Some(patch) => {
+                        info!("📄 Patch found for {} ({} bytes)", file.filename, patch.len());
+                        
+                        let secrets = self.matcher.scan_content(patch);
+                        info!("🔍 Secrets found in {}: {}", file.filename, secrets.len());
+                        
+                        if !secrets.is_empty() {
+                            for secret in secrets {
+                                info!("🔑 SECRET FOUND in {} ({})", file.filename, repo);
+                                
+                                self.telegram.send_secret_found(
+                                    &repo,
+                                    &commit_sha,
+                                    &file.filename,
+                                    &secret.secret_type.to_string(),
+                                    &secret.value,
+                                ).await;
+                                
+                                self.process_secret(secret).await;
+                            }
                         }
+                    }
+                    None => {
+                        warn!("⚠️ No patch for file: {}", file.filename);
                     }
                 }
             }
