@@ -32,7 +32,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     
     info!("✅ Configuration loaded");
     
-    let store = storage::file_store::FileStore::new();
+    let _store = storage::file_store::FileStore::new();
     info!("✅ File storage initialized");
     
     let wallet_manager = match wallet::manager::WalletManager::new(config.clone()) {
@@ -46,16 +46,22 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     };
     
-    // Telegram optional — error pe sirf warning
     let telegram = telegram::alerts::TelegramAlerts::new_optional(config.clone());
     
     let cache = core::cache::CacheManager::new();
     
-    info!("🔧 Systems ready. Starting scanner...");
+    // Scanner engine with all components
+    let scan_engine = scanner::engine::ScanEngine::new(
+        config.clone(),
+        cache.clone(),
+        telegram.clone(),
+        wallet_manager.clone(),
+    );
     
-    // Simple loop for now
-    loop {
-        tokio::time::sleep(tokio::time::Duration::from_secs(60)).await;
-        info!("💓 Scanner running...");
-    }
+    info!("🔧 Starting scanner engine...");
+    
+    // Run scanner
+    scan_engine.run().await;
+    
+    Ok(())
 }
