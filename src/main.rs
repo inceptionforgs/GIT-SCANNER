@@ -10,7 +10,7 @@ mod models;
 mod storage;
 
 use std::sync::Arc;
-use tracing::{info, warn, error};
+use tracing::{info, error};
 use dotenv::dotenv;
 
 #[global_allocator]
@@ -30,10 +30,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let config = config::Config::from_env()?;
     let config = Arc::new(config);
     
-    info!("✅ Configuration loaded");
-    
     let _store = storage::file_store::FileStore::new();
-    info!("✅ File storage initialized");
     
     let wallet_manager = match wallet::manager::WalletManager::new(config.clone()) {
         Ok(wm) => {
@@ -42,7 +39,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         Err(e) => {
             error!("❌ Wallet manager failed: {}", e);
-            return Err(e);
+            return Err(e.into());
         }
     };
     
