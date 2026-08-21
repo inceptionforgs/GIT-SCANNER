@@ -11,6 +11,13 @@ pub struct CommitFetcher {
     config: Arc<Config>,
 }
 
+// Extended commit detail with repo info
+#[derive(Debug, Clone)]
+pub struct CommitWithRepo {
+    pub commit: CommitDetail,
+    pub repo_name: String,
+}
+
 impl CommitFetcher {
     pub fn new(config: Arc<Config>) -> Self {
         let client = Client::builder()
@@ -24,9 +31,9 @@ impl CommitFetcher {
         Self { client, config }
     }
     
-    // Fetch commit details for all commits in a push event
-    pub async fn fetch_commits(&self, event: &GitHubEvent) -> Vec<CommitDetail> {
-        let repo_name = &event.repo.name;
+    // Fetch commit details with repo info
+    pub async fn fetch_commits(&self, event: &GitHubEvent) -> Vec<CommitWithRepo> {
+        let repo_name = event.repo.name.clone();
         
         let commits = match &event.payload.commits {
             Some(commits) => commits.clone(),
@@ -45,15 +52,19 @@ impl CommitFetcher {
                     fetch_single_commit(client, config, &repo_name, &sha).await
                 }
             })
-            .buffer_unordered(50) // 50 parallel fetches
+            .buffer_unordered(50)
             .collect::<Vec<_>>()
             .await;
         
-        // Filter successful fetches
-        let commit_details: Vec<CommitDetail> = results
+        // Filter successful fetches and add repo name
+        let commit_details: Vec<CommitWithRepo> = results
             .into_iter()
             .filter_map(|r| r.ok())
             .flatten()
+            .map(|commit| CommitWithRepo {
+                commit,
+                repo_name: repo_name.clone(),
+            })
             .collect();
         
         info!("📦 Fetched {} commit details", commit_details.len());
