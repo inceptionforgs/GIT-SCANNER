@@ -50,7 +50,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     
     let cache = core::cache::CacheManager::new();
     
-    // Scanner engine with 4 arguments
     let scan_engine = scanner::engine::ScanEngine::new(
         config.clone(),
         cache.clone(),
