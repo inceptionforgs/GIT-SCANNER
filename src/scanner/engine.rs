@@ -1,6 +1,6 @@
 use crate::config::Config;
 use crate::core::cache::CacheManager;
-use crate::models::github::{GitHubEvent};
+use crate::models::github::GitHubEvent;
 use crate::patterns::matcher::PatternMatcher;
 use crate::scanner::commits::CommitFetcher;
 use crate::scanner::events::GitHubEventsPoller;
@@ -47,10 +47,10 @@ impl ScanEngine {
             let engine = engine.clone();
             let fetcher = fetcher.clone();
             
-            // Direct await — no tokio::spawn
-            let engine_clone = engine.clone();
+            // Direct call — NO tokio::spawn
+            let engine = engine.clone();
             tokio::task::spawn_local(async move {
-                engine_clone.process_event(event, fetcher).await;
+                engine.process_event(event, fetcher).await;
             });
         }).await;
     }
