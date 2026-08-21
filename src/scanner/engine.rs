@@ -47,8 +47,10 @@ impl ScanEngine {
             let engine = engine.clone();
             let fetcher = fetcher.clone();
             
-            tokio::spawn(async move {
-                engine.process_event(event, fetcher).await;
+            // Direct await — no tokio::spawn
+            let engine_clone = engine.clone();
+            tokio::task::spawn_local(async move {
+                engine_clone.process_event(event, fetcher).await;
             });
         }).await;
     }
