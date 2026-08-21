@@ -60,7 +60,10 @@ impl TransferExecutor {
         
         info!("📤 Sending from {} to {}", from_address, to_address);
         
-        match client.send_transaction(tx, None).await {
+        // FIX: Result ko variable me store karo
+        let send_result = client.send_transaction(tx, None).await;
+        
+        match send_result {
             Ok(pending) => {
                 let tx_hash = format!("{:?}", pending.tx_hash());
                 Ok(TransferResult {
