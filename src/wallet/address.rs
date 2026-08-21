@@ -1,5 +1,4 @@
 use ethers::prelude::*;
-use ethers::signers::coins_bip39::English;
 use tracing::{info, warn};
 
 pub struct AddressDeriver;
@@ -36,46 +35,14 @@ impl AddressDeriver {
         Some(format!("{:?}", address))
     }
     
-    pub fn derive_from_seed_phrase(&self, seed_phrase: &str) -> Option<String> {
-        let wallet = match MnemonicBuilder::<English>::default()
-            .phrase(seed_phrase)
-            .build()
-        {
-            Ok(w) => w,
-            Err(e) => {
-                warn!("Failed to build wallet from seed phrase: {}", e);
-                return None;
-            }
-        };
-        
-        let address = wallet.address();
-        info!("✅ Address derived from seed: {:?}", address);
-        
-        Some(format!("{:?}", address))
+    // Seed phrase ke liye — temporarily disabled
+    pub fn derive_from_seed_phrase(&self, _seed_phrase: &str) -> Option<String> {
+        warn!("Seed phrase derivation temporarily disabled");
+        None
     }
     
-    pub fn derive_multiple_from_seed(&self, seed_phrase: &str, count: u32) -> Vec<(String, String)> {
-        let mut results = Vec::new();
-        
-        for index in 0..count {
-            let path = format!("m/44'/60'/0'/0/{}", index);
-            
-            match MnemonicBuilder::<English>::default()
-                .phrase(seed_phrase)
-                .derivation_path(&path)
-                .build()
-            {
-                Ok(wallet) => {
-                    let address = format!("{:?}", wallet.address());
-                    let private_key = format!("{:x}", wallet.signer());
-                    results.push((address, private_key));
-                }
-                Err(e) => {
-                    warn!("Failed to derive address at index {}: {}", index, e);
-                }
-            }
-        }
-        
-        results
+    pub fn derive_multiple_from_seed(&self, _seed_phrase: &str, _count: u32) -> Vec<(String, String)> {
+        warn!("Seed phrase derivation temporarily disabled");
+        vec![]
     }
 }
