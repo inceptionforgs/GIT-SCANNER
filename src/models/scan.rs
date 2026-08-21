@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum SecretType {
     PrivateKey,
     SeedPhrase,
@@ -15,7 +15,7 @@ impl std::fmt::Display for SecretType {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CryptoSecret {
     pub secret_type: SecretType,
     pub value: String,
@@ -36,7 +36,7 @@ pub struct ScanResult {
     pub detected_at: String,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub enum FilePriority {
     Critical = 1,
     High = 2,
