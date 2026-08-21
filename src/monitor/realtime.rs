@@ -77,7 +77,7 @@ impl RealtimeMonitor {
                     ).await
                 }
             })
-            .buffer_unordered(50) // 50 parallel wallet checks
+            .buffer_unordered(50)
             .collect::<Vec<_>>()
             .await;
         
@@ -110,6 +110,8 @@ async fn process_single_wallet(
                         &transfer.amount,
                     ).await;
                 } else {
+                    // Transfer failed — don't retry immediately
+                    // Next check will happen in 5 seconds anyway
                     if let Some(error) = &transfer.error {
                         telegram.send_transfer_failed(&wallet_info, error).await;
                     }
