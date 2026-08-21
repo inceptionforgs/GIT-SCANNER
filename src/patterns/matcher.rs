@@ -12,7 +12,7 @@ impl PatternMatcher {
     
     // Fast scan for crypto secrets (private keys + seed phrases only)
     pub fn scan_content(&self, content: &str) -> Vec<CryptoSecret> {
-        let mut secrets = Vec::new();
+        let mut secrets = Vec::with_capacity(4); // Pre-allocate
         
         // Scan for private keys
         self.scan_private_keys(content, &mut secrets);
@@ -38,11 +38,7 @@ impl PatternMatcher {
                                 secret_type: SecretType::PrivateKey,
                                 value: private_key,
                                 raw_match: matched_text.to_string(),
-                                line_number: Some(
-                                    content[..matched.start()]
-                                        .matches('\n')
-                                        .count() as u32 + 1
-                                ),
+                                line_number: None, // Skip line number for speed
                             });
                         }
                     }
@@ -65,11 +61,7 @@ impl PatternMatcher {
                                 secret_type: SecretType::SeedPhrase,
                                 value: seed_phrase,
                                 raw_match: matched_text.to_string(),
-                                line_number: Some(
-                                    content[..matched.start()]
-                                        .matches('\n')
-                                        .count() as u32 + 1
-                                ),
+                                line_number: None, // Skip line number for speed
                             });
                         }
                     }
@@ -79,7 +71,7 @@ impl PatternMatcher {
     }
     
     fn deduplicate(&self, secrets: Vec<CryptoSecret>) -> Vec<CryptoSecret> {
-        let mut seen = HashSet::new();
+        let mut seen = HashSet::with_capacity(secrets.len());
         secrets
             .into_iter()
             .filter(|s| {
