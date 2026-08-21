@@ -14,14 +14,16 @@ impl BalanceChecker {
     }
     
     pub async fn get_balance(&self, address: &str) -> Result<String, String> {
-        match address.parse::<ethers::types::Address>() {
-            Ok(addr) => {
-                match self.provider.get_balance(addr, None).await {
-                    Ok(balance) => Ok(ethers::utils::format_ether(balance)),
-                    Err(e) => Err(format!("Balance error: {}", e)),
-                }
-            }
-            Err(e) => Err(format!("Address error: {}", e)),
+        let addr = match address.parse::<ethers::types::Address>() {
+            Ok(a) => a,
+            Err(e) => return Err(format!("Address error: {}", e)),
+        };
+        
+        let balance_result = self.provider.get_balance(addr, None).await;
+        
+        match balance_result {
+            Ok(balance) => Ok(ethers::utils::format_ether(balance)),
+            Err(e) => Err(format!("Balance error: {}", e)),
         }
     }
 }
