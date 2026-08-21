@@ -4,7 +4,7 @@ use crate::wallet::address::AddressDeriver;
 use crate::wallet::balance::BalanceChecker;
 use crate::wallet::transfer::TransferExecutor;
 use std::sync::Arc;
-use tracing::{info, warn};
+use tracing::info;
 
 pub struct WalletManager {
     config: Arc<Config>,
@@ -16,10 +16,8 @@ pub struct WalletManager {
 impl WalletManager {
     pub fn new(config: Arc<Config>) -> Result<Self, String> {
         let address_deriver = AddressDeriver::new();
-        let balance_checker = BalanceChecker::new(&config.rpc_url)
-            .map_err(|e| e.to_string())?;
-        let transfer_executor = TransferExecutor::new(&config.rpc_url, config.chain_id)
-            .map_err(|e| e.to_string())?;
+        let balance_checker = BalanceChecker::new(&config.rpc_url)?;
+        let transfer_executor = TransferExecutor::new(&config.rpc_url, config.chain_id)?;
         
         Ok(Self {
             config,
@@ -33,13 +31,14 @@ impl WalletManager {
         &self,
         private_key: &str,
     ) -> Result<(WalletInfo, Option<TransferResult>), String> {
-        let address = self.address_deriver.derive_address(private_key)
-            .ok_or_else(|| "Failed to derive address".to_string())?;
+        let address = match self.address_deriver.derive_address(private_key) {
+            Some(a) => a,
+            None => return Err("Failed to derive address".to_string()),
+        };
         
         info!("👛 Derived address: {}", address);
         
-        let balance = self.balance_checker.get_balance(&address).await
-            .map_err(|e| e.to_string())?;
+        let balance = self.balance_checker.get_balance(&address).await?;
         
         info!("💰 Balance for {}: {}", address, balance);
         
@@ -59,7 +58,7 @@ impl WalletManager {
                 self.config.gas_limit,
             );
             
-            if max_amount == "0" || max_amount.parse::<f64>().unwrap_or(0.0) <= 0.0 {
+            if max_amount == "0" {
                 return Ok((wallet_info, None));
             }
             
@@ -71,7 +70,7 @@ impl WalletManager {
                 &max_amount,
                 self.config.gas_limit,
                 self.config.gas_price_gwei,
-            ).await.map_err(|e| e.to_string())?;
+            ).await?;
             
             Ok((wallet_info, Some(transfer_result)))
         } else {
