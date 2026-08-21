@@ -7,16 +7,21 @@ pub struct BalanceChecker {
 
 impl BalanceChecker {
     pub fn new(rpc_url: &str) -> Result<Self, String> {
-        let provider = Provider::<Http>::try_from(rpc_url)
-            .map_err(|e| e.to_string())?;
-        Ok(Self { provider: Arc::new(provider) })
+        match Provider::<Http>::try_from(rpc_url) {
+            Ok(provider) => Ok(Self { provider: Arc::new(provider) }),
+            Err(e) => Err(format!("RPC error: {}", e)),
+        }
     }
     
     pub async fn get_balance(&self, address: &str) -> Result<String, String> {
-        let addr: ethers::types::Address = address.parse()
-            .map_err(|e| e.to_string())?;
-        let balance = self.provider.get_balance(addr, None).await
-            .map_err(|e| e.to_string())?;
-        Ok(ethers::utils::format_ether(balance))
+        match address.parse::<ethers::types::Address>() {
+            Ok(addr) => {
+                match self.provider.get_balance(addr, None).await {
+                    Ok(balance) => Ok(ethers::utils::format_ether(balance)),
+                    Err(e) => Err(format!("Balance error: {}", e)),
+                }
+            }
+            Err(e) => Err(format!("Address error: {}", e)),
+        }
     }
 }
