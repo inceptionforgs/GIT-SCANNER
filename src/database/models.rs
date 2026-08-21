@@ -15,7 +15,7 @@ pub struct MonitoredWalletDoc {
     pub first_seen: DateTime,
     pub last_checked: DateTime,
     pub last_balance: String,
-    pub total_swept: String,
+    pub total_swept: f64,  // Changed from String to f64
     pub status: String,
     pub tx_history: Vec<TxHistoryDoc>,
     pub created_at: DateTime,
@@ -53,7 +53,7 @@ impl MonitoredWalletDoc {
             first_seen: bson_now,
             last_checked: bson_now,
             last_balance: "0".to_string(),
-            total_swept: "0".to_string(),
+            total_swept: 0.0,  // Float initialization
             status: "monitoring".to_string(),
             tx_history: vec![],
             created_at: bson_now,
