@@ -30,7 +30,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let config = config::Config::from_env()?;
     let config = Arc::new(config);
     
+    info!("✅ Configuration loaded");
+    
     let _store = storage::file_store::FileStore::new();
+    info!("✅ File storage initialized");
     
     let wallet_manager = match wallet::manager::WalletManager::new(config.clone()) {
         Ok(wm) => {
