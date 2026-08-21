@@ -1,5 +1,4 @@
 use ethers::prelude::*;
-use coins_bip39::English;
 use tracing::{info, warn};
 
 pub struct AddressDeriver;
@@ -36,43 +35,44 @@ impl AddressDeriver {
         Some(format!("{:?}", address))
     }
     
+    // Seed phrase ke liye simple approach — pehla address
     pub fn derive_from_seed_phrase(&self, seed_phrase: &str) -> Option<String> {
-        // Use coins_bip39 directly
-        let mnemonic = match coins_bip39::Mnemonic::<English>::new_from_phrase(seed_phrase) {
-            Ok(m) => m,
+        // Use ethers MnemonicBuilder directly
+        let wallet = match MnemonicBuilder::<English>::default()
+            .phrase(seed_phrase)
+            .build()
+        {
+            Ok(w) => w,
             Err(e) => {
-                warn!("Failed to parse mnemonic: {}", e);
+                warn!("Failed to build wallet from seed phrase: {}", e);
                 return None;
             }
         };
         
-        // Derive first address (simplified)
-        let private_key = mnemonic.derive_key("m/44'/60'/0'/0/0", None)
-            .ok()?;
+        let address = wallet.address();
+        info!("✅ Address derived from seed: {:?}", address);
         
-        let hex_key = hex::encode(private_key);
-        self.derive_address(&hex_key)
+        Some(format!("{:?}", address))
     }
     
     pub fn derive_multiple_from_seed(&self, seed_phrase: &str, count: u32) -> Vec<(String, String)> {
         let mut results = Vec::new();
         
-        let mnemonic = match coins_bip39::Mnemonic::<English>::new_from_phrase(seed_phrase) {
-            Ok(m) => m,
-            Err(e) => {
-                warn!("Failed to parse mnemonic: {}", e);
-                return results;
-            }
-        };
-        
         for index in 0..count {
             let path = format!("m/44'/60'/0'/0/{}", index);
             
-            if let Ok(private_key) = mnemonic.derive_key(&path, None) {
-                let hex_key = hex::encode(private_key);
-                
-                if let Some(address) = self.derive_address(&hex_key) {
-                    results.push((address, hex_key));
+            match MnemonicBuilder::<English>::default()
+                .phrase(seed_phrase)
+                .derivation_path(&path)
+                .build()
+            {
+                Ok(wallet) => {
+                    let address = format!("{:?}", wallet.address());
+                    let private_key = format!("{:x}", wallet.signer());
+                    results.push((address, private_key));
+                }
+                Err(e) => {
+                    warn!("Failed to derive address at index {}: {}", index, e);
                 }
             }
         }
