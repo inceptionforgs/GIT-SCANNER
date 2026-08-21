@@ -6,7 +6,7 @@ use crate::patterns::matcher::PatternMatcher;
 use crate::scanner::commits::CommitFetcher;
 use crate::scanner::events::GitHubEventsPoller;
 use crate::scanner::files::{should_scan_file, get_file_priority};
-use crate::models::scan::{CryptoSecret, FilePriority};
+use crate::models::scan::FilePriority;
 use std::sync::Arc;
 use tracing::{info, warn};
 
@@ -14,8 +14,8 @@ pub struct ScanEngine {
     config: Arc<Config>,
     cache: Arc<CacheManager>,
     matcher: Arc<PatternMatcher>,
+    event_queue: Arc<EventQueue<GitHubEvent>>,
     commit_queue: Arc<EventQueue<CommitDetail>>,
-    secret_queue: Arc<EventQueue<(String, String, CryptoSecret)>>,
 }
 
 impl ScanEngine {
@@ -27,8 +27,8 @@ impl ScanEngine {
             config: config.clone(),
             cache,
             matcher: Arc::new(PatternMatcher::new()),
+            event_queue: EventQueue::new(50_000),
             commit_queue: EventQueue::new(50_000),
-            secret_queue: EventQueue::new(10_000),
         })
     }
     
@@ -56,11 +56,11 @@ impl ScanEngine {
         let consumer1 = tokio::spawn(async move {
             let fetcher = CommitFetcher::new(engine.config.clone());
             
-            while let Ok(event) = engine.commit_queue.receiver().recv_async().await {
-                let commits = fetcher.fetch_commits_from_detail(&event).await;
+            while let Ok(event) = engine.event_queue.receiver().recv_async().await {
+                let commits = fetcher.fetch_commits(&event).await;
                 
                 for commit in commits {
-                    let _ = engine.secret_queue.sender().send_async(commit).await;
+                    let _ = engine.commit_queue.sender().send_async(commit).await;
                 }
             }
         });
@@ -68,7 +68,7 @@ impl ScanEngine {
         // Consumer 2: Scan commits (parallel)
         let engine = self.clone();
         let consumer2 = tokio::spawn(async move {
-            while let Ok(commit) = engine.secret_queue.receiver().recv_async().await {
+            while let Ok(commit) = engine.commit_queue.receiver().recv_async().await {
                 let engine = engine.clone();
                 tokio::spawn(async move {
                     engine.scan_commit(commit).await;
@@ -86,7 +86,7 @@ impl ScanEngine {
         if let Some(commits) = &event.payload.commits {
             for commit in commits {
                 if self.cache.should_scan_commit(&commit.sha) {
-                    let _ = self.commit_queue.sender().send_async(event.clone()).await;
+                    let _ = self.event_queue.sender().send_async(event.clone()).await;
                     break; // One event per commit batch
                 }
             }
@@ -96,7 +96,13 @@ impl ScanEngine {
     // Scan commit for secrets
     async fn scan_commit(&self, commit: CommitDetail) {
         let repo_name = commit.html_url.as_ref()
-            .map(|url| url.replace("https://github.com/", "").split("/commit/").next().unwrap_or("unknown").to_string())
+            .map(|url| {
+                url.replace("https://github.com/", "")
+                    .split("/commit/")
+                    .next()
+                    .unwrap_or("unknown")
+                    .to_string()
+            })
             .unwrap_or_else(|| "unknown".to_string());
         
         let files = match &commit.files {
@@ -129,15 +135,33 @@ impl ScanEngine {
                             secret.secret_type, file.filename, repo_name
                         );
                         
-                        // Send to secret queue for processing
-                        let _ = self.secret_queue.sender().send_async((
+                        // Process secret (wallet operations)
+                        self.process_secret(
                             repo_name.clone(),
                             commit.sha.clone(),
+                            file.filename.clone(),
                             secret,
-                        )).await;
+                        ).await;
                     }
                 }
             }
         }
+    }
+    
+    // Process found secret
+    async fn process_secret(
+        &self,
+        repo_name: String,
+        commit_sha: String,
+        file_path: String,
+        secret: crate::models::scan::CryptoSecret,
+    ) {
+        info!(
+            "🔐 Processing {} from {}",
+            secret.secret_type, file_path
+        );
+        
+        // Here wallet manager will be called
+        // This will be integrated in main.rs
     }
 }
