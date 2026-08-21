@@ -60,7 +60,6 @@ impl TransferExecutor {
         
         info!("📤 Sending from {} to {}", from_address, to_address);
         
-        // FIX: Result ko variable me store karo
         let send_result = client.send_transaction(tx, None).await;
         
         match send_result {
