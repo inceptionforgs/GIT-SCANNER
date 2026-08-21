@@ -1,5 +1,4 @@
 use serde::{Deserialize, Serialize};
-use chrono::{DateTime, Utc};
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct WalletInfo {
@@ -27,10 +26,10 @@ pub struct MonitoredWallet {
     pub source_repo: String,
     pub source_commit: String,
     pub source_file: String,
-    pub first_seen: DateTime<Utc>,
-    pub last_checked: DateTime<Utc>,
+    pub first_seen: String,
+    pub last_checked: String,
     pub last_balance: String,
-    pub total_swept: String,
+    pub total_swept: f64,
     pub status: String,
     pub tx_history: Vec<TxRecord>,
 }
@@ -40,7 +39,7 @@ pub struct TxRecord {
     pub tx_hash: String,
     pub amount: String,
     pub to_address: String,
-    pub timestamp: DateTime<Utc>,
+    pub timestamp: String,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -48,5 +47,5 @@ pub struct BalanceCheckResult {
     pub address: String,
     pub balance: String,
     pub token_symbol: String,
-    pub checked_at: DateTime<Utc>,
+    pub checked_at: String,
 }
