@@ -47,9 +47,10 @@ impl ScanEngine {
             let engine = engine.clone();
             let fetcher = fetcher.clone();
             
-            // Direct call — NO tokio::spawn
-            let engine = engine.clone();
-            tokio::task::spawn_local(async move {
+            // DIRECT CALL — no spawn at all
+            // Use block_on to run async inside sync callback
+            let rt = tokio::runtime::Handle::current();
+            rt.block_on(async move {
                 engine.process_event(event, fetcher).await;
             });
         }).await;
