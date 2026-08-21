@@ -41,6 +41,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     
     // Initialize cache
     let cache = core::cache::CacheManager::new();
+    info!("✅ Cache initialized");
     
     // Initialize database
     let db = match database::mongo::MongoDB::new(
@@ -58,6 +59,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
     
     let db_ops = Arc::new(database::ops::DatabaseOps::new(db.clone()));
+    info!("✅ Database operations ready");
     
     // Initialize wallet manager
     let wallet_manager = match wallet::manager::WalletManager::new(config.clone()) {
@@ -83,10 +85,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     };
     
-    // Initialize scan engine
+    // Initialize scan engine (with all components)
     let scan_engine = scanner::engine::ScanEngine::new(
         config.clone(),
         cache.clone(),
+        wallet_manager.clone(),
+        telegram.clone(),
+        db_ops.clone(),
     );
     
     info!("🔧 Starting scan engine...");
@@ -112,6 +117,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     });
     
     info!("✅ All systems running. Press Ctrl+C to stop.");
+    info!("📊 Monitoring GitHub for leaked private keys and seed phrases...");
     
     // Wait for shutdown signal
     tokio::signal::ctrl_c().await?;
