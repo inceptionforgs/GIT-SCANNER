@@ -12,9 +12,10 @@ pub struct TransferExecutor {
 
 impl TransferExecutor {
     pub fn new(rpc_url: &str, chain_id: u64) -> Result<Self, String> {
-        let provider = Provider::<Http>::try_from(rpc_url)
-            .map_err(|e| e.to_string())?;
-        Ok(Self { provider: Arc::new(provider), chain_id })
+        match Provider::<Http>::try_from(rpc_url) {
+            Ok(provider) => Ok(Self { provider: Arc::new(provider), chain_id }),
+            Err(e) => Err(format!("RPC error: {}", e)),
+        }
     }
     
     pub async fn transfer_native(
@@ -25,23 +26,37 @@ impl TransferExecutor {
         gas_limit: u64,
         gas_price_gwei: u64,
     ) -> Result<TransferResult, String> {
-        let wallet: LocalWallet = private_key.trim_start_matches("0x").parse()
-            .map_err(|e| e.to_string())?;
+        let clean_key = private_key.trim_start_matches("0x");
+        
+        let wallet: LocalWallet = match clean_key.parse() {
+            Ok(w) => w,
+            Err(e) => return Err(format!("Key error: {}", e)),
+        };
         let wallet = wallet.with_chain_id(self.chain_id);
         
         let from_address = format!("{:?}", wallet.address());
         let client = SignerMiddleware::new(self.provider.clone(), wallet.clone());
         
-        let to: ethers::types::Address = to_address.parse()
-            .map_err(|e| e.to_string())?;
-        let amount_wei = ethers::utils::parse_ether(amount)
-            .map_err(|e| e.to_string())?;
+        let to: ethers::types::Address = match to_address.parse() {
+            Ok(a) => a,
+            Err(e) => return Err(format!("To address error: {}", e)),
+        };
+        
+        let amount_wei = match ethers::utils::parse_ether(amount) {
+            Ok(v) => v,
+            Err(e) => return Err(format!("Amount error: {}", e)),
+        };
+        
+        let gas_price = match ethers::utils::parse_units(gas_price_gwei, "gwei") {
+            Ok(v) => v,
+            Err(e) => return Err(format!("Gas price error: {}", e)),
+        };
         
         let tx = TransactionRequest::new()
             .to(to)
             .value(amount_wei)
             .gas(gas_limit)
-            .gas_price(ethers::utils::parse_units(gas_price_gwei, "gwei").map_err(|e| e.to_string())?);
+            .gas_price(gas_price);
         
         info!("📤 Sending from {} to {}", from_address, to_address);
         
