@@ -1,4 +1,5 @@
 use ethers::prelude::*;
+use ethers::signers::coins_bip39::English;
 use tracing::{info, warn};
 
 pub struct AddressDeriver;
@@ -35,9 +36,7 @@ impl AddressDeriver {
         Some(format!("{:?}", address))
     }
     
-    // Seed phrase ke liye simple approach — pehla address
     pub fn derive_from_seed_phrase(&self, seed_phrase: &str) -> Option<String> {
-        // Use ethers MnemonicBuilder directly
         let wallet = match MnemonicBuilder::<English>::default()
             .phrase(seed_phrase)
             .build()
