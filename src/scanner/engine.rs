@@ -47,10 +47,8 @@ impl ScanEngine {
             let engine = engine.clone();
             let fetcher = fetcher.clone();
             
-            // DIRECT CALL — no spawn at all
-            // Use block_on to run async inside sync callback
-            let rt = tokio::runtime::Handle::current();
-            rt.block_on(async move {
+            // Ab String error hai — Send ho jayega
+            tokio::spawn(async move {
                 engine.process_event(event, fetcher).await;
             });
         }).await;
@@ -119,12 +117,12 @@ impl ScanEngine {
                         }
                     }
                     Err(e) => {
-                        warn!("Failed to process private key: {}", e);
+                        warn!("Failed: {}", e);
                     }
                 }
             }
             SecretType::SeedPhrase => {
-                warn!("Seed phrase processing not yet implemented");
+                warn!("Seed phrase not implemented");
             }
         }
     }
