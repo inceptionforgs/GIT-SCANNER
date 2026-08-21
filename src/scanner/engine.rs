@@ -47,7 +47,6 @@ impl ScanEngine {
             let engine = engine.clone();
             let fetcher = fetcher.clone();
             
-            // Ab String error hai — Send ho jayega
             tokio::spawn(async move {
                 engine.process_event(event, fetcher).await;
             });
