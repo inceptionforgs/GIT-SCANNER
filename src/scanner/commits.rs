@@ -4,7 +4,7 @@ use reqwest::Client;
 use std::sync::Arc;
 use std::time::Duration;
 use futures::stream::{self, StreamExt};
-use tracing::{info, warn, error};
+use tracing::{info, warn};
 
 #[derive(Clone)]
 pub struct CommitFetcher {
@@ -34,11 +34,24 @@ impl CommitFetcher {
     pub async fn fetch_commits(&self, event: &GitHubEvent) -> Vec<CommitWithRepo> {
         let repo_name = event.repo.name.clone();
         
+        // Payload se commits lo, agar nahi to head se
         let commits = match &event.payload.commits {
-            Some(commits) => commits.clone(),
-            None => {
-                warn!("No commits in event: {}", repo_name);
-                return vec![];
+            Some(commits) if !commits.is_empty() => commits.clone(),
+            _ => {
+                // Head commit use karo
+                if let Some(head_sha) = &event.payload.head {
+                    info!("📝 Using head commit: {}", head_sha);
+                    vec![crate::models::github::Commit {
+                        sha: head_sha.clone(),
+                        author: None,
+                        message: None,
+                        distinct: None,
+                        url: None,
+                    }]
+                } else {
+                    warn!("No commits and no head in event: {}", repo_name);
+                    return vec![];
+                }
             }
         };
         
@@ -71,12 +84,12 @@ impl CommitFetcher {
                 }
                 Ok(None) => {}
                 Err(e) => {
-                    error!("❌ Commit fetch error: {}", e);
+                    warn!("Commit fetch error: {}", e);
                 }
             }
         }
         
-        info!("✅ Fetched {} commit details from {}", commit_details.len(), repo_name);
+        info!("✅ Fetched {} commit details", commit_details.len());
         commit_details
     }
 }
@@ -104,8 +117,6 @@ async fn fetch_single_commit(
     };
     
     let response = request.send().await?;
-    
-    // Status pehle save karo
     let status = response.status();
     
     if status.is_success() {
@@ -113,7 +124,7 @@ async fn fetch_single_commit(
         Ok(Some(commit))
     } else {
         let body = response.text().await?;
-        warn!("❌ GitHub API error: {} - {}", status, body);
+        warn!("GitHub API error: {} - {}", status, body);
         Ok(None)
     }
 }
