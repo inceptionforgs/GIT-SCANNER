@@ -63,7 +63,7 @@ impl FileStore {
         tokio::spawn(async move {
             loop {
                 sleep(Duration::from_secs(60)).await;
-                store_clone.save_to_file();
+                store_clone.save_to_file().await;
             }
         });
         
@@ -99,8 +99,8 @@ impl FileStore {
         }
     }
     
-    fn save_to_file(&self) {
-        let wallets = self.wallets.blocking_read();
+    async fn save_to_file(&self) {
+        let wallets = self.wallets.read().await;
         if let Ok(json) = serde_json::to_string_pretty(&*wallets) {
             let _ = std::fs::write("wallets_backup.json", json);
             info!("📁 Wallets saved to file");
@@ -110,9 +110,13 @@ impl FileStore {
     fn load_from_file(&self) {
         if let Ok(content) = std::fs::read_to_string("wallets_backup.json") {
             if let Ok(wallets) = serde_json::from_str::<HashMap<String, StoredWallet>>(&content) {
-                let mut store = self.wallets.blocking_write();
-                *store = wallets;
-                info!("📂 Loaded {} wallets from file", store.len());
+                // Use try_write ya direct assignment
+                let store = self.wallets.clone();
+                tokio::spawn(async move {
+                    let mut write_guard = store.write().await;
+                    *write_guard = wallets;
+                    info!("📂 Loaded {} wallets from file", write_guard.len());
+                });
             }
         }
     }
