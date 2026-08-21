@@ -6,12 +6,12 @@ use std::time::Duration;
 use futures::stream::{self, StreamExt};
 use tracing::{info, warn};
 
+#[derive(Clone)]
 pub struct CommitFetcher {
     client: Client,
     config: Arc<Config>,
 }
 
-// Extended commit detail with repo info
 #[derive(Debug, Clone)]
 pub struct CommitWithRepo {
     pub commit: CommitDetail,
@@ -21,7 +21,7 @@ pub struct CommitWithRepo {
 impl CommitFetcher {
     pub fn new(config: Arc<Config>) -> Self {
         let client = Client::builder()
-            .pool_max_idle_per_host(20)
+            .pool_max_idle_per_host(10)
             .tcp_keepalive(Duration::from_secs(60))
             .timeout(Duration::from_secs(15))
             .user_agent("git-scanner/1.0")
@@ -31,7 +31,6 @@ impl CommitFetcher {
         Self { client, config }
     }
     
-    // Fetch commit details with repo info
     pub async fn fetch_commits(&self, event: &GitHubEvent) -> Vec<CommitWithRepo> {
         let repo_name = event.repo.name.clone();
         
@@ -40,7 +39,6 @@ impl CommitFetcher {
             None => return vec![],
         };
         
-        // Parallel fetch with buffer_unordered
         let results = stream::iter(commits)
             .map(|commit| {
                 let client = self.client.clone();
@@ -52,11 +50,10 @@ impl CommitFetcher {
                     fetch_single_commit(client, config, &repo_name, &sha).await
                 }
             })
-            .buffer_unordered(50)
+            .buffer_unordered(10)
             .collect::<Vec<_>>()
             .await;
         
-        // Filter successful fetches and add repo name
         let commit_details: Vec<CommitWithRepo> = results
             .into_iter()
             .filter_map(|r| r.ok())
