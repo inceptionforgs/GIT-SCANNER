@@ -5,7 +5,6 @@ use std::time::Duration;
 use tokio::time::sleep;
 use tracing::info;
 use serde::{Deserialize, Serialize};
-use chrono::{DateTime, Utc};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StoredWallet {
@@ -15,8 +14,8 @@ pub struct StoredWallet {
     pub source_repo: String,
     pub source_commit: String,
     pub source_file: String,
-    pub first_seen: DateTime<Utc>,
-    pub last_checked: DateTime<Utc>,
+    pub first_seen: String,
+    pub last_checked: String,
     pub last_balance: String,
     pub total_swept: f64,
     pub status: String,
@@ -31,7 +30,7 @@ impl StoredWallet {
         source_commit: String,
         source_file: String,
     ) -> Self {
-        let now = Utc::now();
+        let now = chrono::Utc::now().to_rfc3339();
         Self {
             address,
             private_key,
@@ -39,7 +38,7 @@ impl StoredWallet {
             source_repo,
             source_commit,
             source_file,
-            first_seen: now,
+            first_seen: now.clone(),
             last_checked: now,
             last_balance: "0".to_string(),
             total_swept: 0.0,
@@ -60,7 +59,6 @@ impl FileStore {
         
         store.load_from_file();
         
-        // Periodic save (har 60 sec)
         let store_clone = store.clone();
         tokio::spawn(async move {
             loop {
@@ -73,9 +71,10 @@ impl FileStore {
     }
     
     pub async fn save(&self, wallet: StoredWallet) {
+        let address = wallet.address.clone();
         let mut wallets = self.wallets.write().await;
-        wallets.insert(wallet.address.clone(), wallet);
-        info!("💾 Wallet saved: {}", wallet.address);
+        wallets.insert(address.clone(), wallet);
+        info!("💾 Wallet saved: {}", address);
     }
     
     pub async fn get_all(&self) -> Vec<StoredWallet> {
@@ -87,7 +86,7 @@ impl FileStore {
         let mut wallets = self.wallets.write().await;
         if let Some(wallet) = wallets.get_mut(address) {
             wallet.last_balance = balance.to_string();
-            wallet.last_checked = Utc::now();
+            wallet.last_checked = chrono::Utc::now().to_rfc3339();
         }
     }
     
@@ -96,7 +95,7 @@ impl FileStore {
         if let Some(wallet) = wallets.get_mut(address) {
             wallet.total_swept += amount;
             wallet.last_balance = "0".to_string();
-            wallet.last_checked = Utc::now();
+            wallet.last_checked = chrono::Utc::now().to_rfc3339();
         }
     }
     
