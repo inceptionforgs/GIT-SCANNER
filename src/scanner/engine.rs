@@ -56,6 +56,11 @@ impl ScanEngine {
     async fn process_event(&self, event: GitHubEvent, fetcher: CommitFetcher) {
         let repo_name = event.repo.name.clone();
         
+        // Sirf PushEvent process karo
+        if event.event_type != "PushEvent" {
+            return;
+        }
+        
         info!("📦 Push event from: {}", repo_name);
         
         let commits = fetcher.fetch_commits(&event).await;
