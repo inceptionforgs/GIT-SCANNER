@@ -5,16 +5,16 @@ use regex::Regex;
 pub static PRIVATE_KEY_PATTERNS: Lazy<Vec<Regex>> = Lazy::new(|| {
     vec![
         // Pattern 1: PRIVATE_KEY=0x... (with variable name)
-        Regex::new(r"(?i)(private[_\-]?key|secret[_\-]?key|wallet[_\-]?key|pk)\s*[=:]\s*['\"]?(0x[a-fA-F0-9]{64})['\"]?").unwrap(),
+        Regex::new(r#"(?i)(private[_\-]?key|secret[_\-]?key|wallet[_\-]?key|pk)\s*[=:]\s*['"]?(0x[a-fA-F0-9]{64})['"]?"#).unwrap(),
         
         // Pattern 2: privateKeys: ["0x..."] (Hardhat style)
-        Regex::new(r"(?i)privateKeys\s*:\s*\[\s*['\"](0x[a-fA-F0-9]{64})['\"]").unwrap(),
+        Regex::new(r#"(?i)privateKeys\s*:\s*\[\s*['"](0x[a-fA-F0-9]{64})['"]"#).unwrap(),
         
         // Pattern 3: Raw 0x + 64 hex chars (anywhere in text)
         Regex::new(r"0x[a-fA-F0-9]{64}").unwrap(),
         
         // Pattern 4: 64 hex chars without 0x (with key-like variable)
-        Regex::new(r"(?i)(private[_\-]?key|secret[_\-]?key|wallet[_\-]?key)\s*[=:]\s*['\"]?([a-fA-F0-9]{64})['\"]?").unwrap(),
+        Regex::new(r#"(?i)(private[_\-]?key|secret[_\-]?key|wallet[_\-]?key)\s*[=:]\s*['"]?([a-fA-F0-9]{64})['"]?"#).unwrap(),
     ]
 });
 
