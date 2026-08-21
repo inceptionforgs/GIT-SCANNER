@@ -4,7 +4,7 @@ use reqwest::Client;
 use std::sync::Arc;
 use std::time::Duration;
 use futures::stream::{self, StreamExt};
-use tracing::{info, warn};
+use tracing::{info, warn, error};
 
 #[derive(Clone)]
 pub struct CommitFetcher {
@@ -36,8 +36,13 @@ impl CommitFetcher {
         
         let commits = match &event.payload.commits {
             Some(commits) => commits.clone(),
-            None => return vec![],
+            None => {
+                warn!("No commits in event: {}", repo_name);
+                return vec![];
+            }
         };
+        
+        info!("📝 Fetching {} commits from {}", commits.len(), repo_name);
         
         let results = stream::iter(commits)
             .map(|commit| {
@@ -50,21 +55,30 @@ impl CommitFetcher {
                     fetch_single_commit(client, config, &repo_name, &sha).await
                 }
             })
-            .buffer_unordered(10)
+            .buffer_unordered(5)
             .collect::<Vec<_>>()
             .await;
         
-        let commit_details: Vec<CommitWithRepo> = results
-            .into_iter()
-            .filter_map(|r| r.ok())
-            .flatten()
-            .map(|commit| CommitWithRepo {
-                commit,
-                repo_name: repo_name.clone(),
-            })
-            .collect();
+        let mut commit_details: Vec<CommitWithRepo> = Vec::new();
         
-        info!("📦 Fetched {} commit details", commit_details.len());
+        for result in results {
+            match result {
+                Ok(Some(commit)) => {
+                    commit_details.push(CommitWithRepo {
+                        commit,
+                        repo_name: repo_name.clone(),
+                    });
+                }
+                Ok(None) => {
+                    warn!("No commit detail found");
+                }
+                Err(e) => {
+                    error!("❌ Commit fetch error: {}", e);
+                }
+            }
+        }
+        
+        info!("✅ Fetched {} commit details from {}", commit_details.len(), repo_name);
         commit_details
     }
 }
@@ -80,6 +94,8 @@ async fn fetch_single_commit(
         config.github_api_url, repo_name, sha
     );
     
+    info!("📡 Fetching: {}", url);
+    
     let request = client
         .get(&url)
         .header("Accept", "application/vnd.github+json")
@@ -93,11 +109,14 @@ async fn fetch_single_commit(
     
     let response = request.send().await?;
     
+    info!("📡 Response status: {}", response.status());
+    
     if response.status().is_success() {
         let commit = response.json::<CommitDetail>().await?;
         Ok(Some(commit))
     } else {
-        warn!("Failed to fetch commit {}: {}", sha, response.status());
+        let body = response.text().await?;
+        warn!("❌ GitHub API error: {} - {}", response.status(), body);
         Ok(None)
     }
 }
