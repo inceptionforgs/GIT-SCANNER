@@ -34,13 +34,10 @@ impl CommitFetcher {
     pub async fn fetch_commits(&self, event: &GitHubEvent) -> Vec<CommitWithRepo> {
         let repo_name = event.repo.name.clone();
         
-        // Payload se commits lo, agar nahi to head se
         let commits = match &event.payload.commits {
             Some(commits) if !commits.is_empty() => commits.clone(),
             _ => {
-                // Head commit use karo
                 if let Some(head_sha) = &event.payload.head {
-                    info!("📝 Using head commit: {}", head_sha);
                     vec![crate::models::github::Commit {
                         sha: head_sha.clone(),
                         author: None,
@@ -49,13 +46,10 @@ impl CommitFetcher {
                         url: None,
                     }]
                 } else {
-                    warn!("No commits and no head in event: {}", repo_name);
                     return vec![];
                 }
             }
         };
-        
-        info!("📝 Fetching {} commits from {}", commits.len(), repo_name);
         
         let results = stream::iter(commits)
             .map(|commit| {
@@ -89,7 +83,6 @@ impl CommitFetcher {
             }
         }
         
-        info!("✅ Fetched {} commit details", commit_details.len());
         commit_details
     }
 }
@@ -105,26 +98,33 @@ async fn fetch_single_commit(
         config.github_api_url, repo_name, sha
     );
     
-    let request = client
+    let mut request = client
         .get(&url)
         .header("Accept", "application/vnd.github+json")
         .header("X-GitHub-Api-Version", "2022-11-28");
     
-    let request = if let Some(token) = &config.github_token {
-        request.header("Authorization", format!("Bearer {}", token))
-    } else {
-        request
-    };
+    // Token debug
+    match &config.github_token {
+        Some(token) => {
+            info!("🔑 Using GitHub token: {}...", &token[..10.min(token.len())]);
+            request = request.header("Authorization", format!("Bearer {}", token));
+        }
+        None => {
+            warn!("⚠️ No GitHub token in config");
+        }
+    }
     
     let response = request.send().await?;
     let status = response.status();
+    
+    info!("📡 Response: {}", status);
     
     if status.is_success() {
         let commit = response.json::<CommitDetail>().await?;
         Ok(Some(commit))
     } else {
         let body = response.text().await?;
-        warn!("GitHub API error: {} - {}", status, body);
+        warn!("❌ API error: {} - {}", status, body);
         Ok(None)
     }
 }
