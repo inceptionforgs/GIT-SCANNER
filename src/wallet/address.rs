@@ -70,7 +70,7 @@ impl AddressDeriver {
         Some(format!("{:?}", address))
     }
     
-    // Derive multiple addresses from seed phrase (first 5 accounts)
+    // Derive multiple addresses from seed phrase
     pub fn derive_multiple_from_seed(&self, seed_phrase: &str, count: u32) -> Vec<(String, String)> {
         let mut results = Vec::new();
         
