@@ -1,7 +1,7 @@
 use crate::database::mongo::MongoDB;
 use crate::database::models::{MonitoredWalletDoc, ScanLogDoc};
 use mongodb::bson::{doc, DateTime};
-use mongodb::options::{FindOptions, UpdateOptions, ReplaceOptions};
+use mongodb::options::ReplaceOptions;
 use std::sync::Arc;
 use chrono::Utc;
 use tracing::{info, warn};
@@ -15,7 +15,7 @@ impl DatabaseOps {
         Self { db }
     }
     
-    // Save monitored wallet (upsert - update if exists, insert if new)
+    // Save monitored wallet (upsert)
     pub async fn save_monitored_wallet(
         &self,
         wallet: MonitoredWalletDoc,
@@ -82,7 +82,7 @@ impl DatabaseOps {
         Ok(wallets)
     }
     
-    // Update wallet after sweep
+    // Update wallet after sweep (total_swept as float)
     pub async fn update_wallet_after_sweep(
         &self,
         address: &str,
@@ -93,6 +93,9 @@ impl DatabaseOps {
         
         let now = Utc::now();
         let bson_now = DateTime::from_millis(now.timestamp_millis());
+        
+        // Convert amount to float for increment
+        let amount_float: f64 = amount.parse().unwrap_or(0.0);
         
         let filter = doc! { "address": address };
         
@@ -111,7 +114,7 @@ impl DatabaseOps {
                 }
             },
             "$inc": {
-                "total_swept": amount,
+                "total_swept": amount_float,
             }
         };
         
