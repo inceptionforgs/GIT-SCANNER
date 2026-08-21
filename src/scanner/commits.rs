@@ -69,9 +69,7 @@ impl CommitFetcher {
                         repo_name: repo_name.clone(),
                     });
                 }
-                Ok(None) => {
-                    warn!("No commit detail found");
-                }
+                Ok(None) => {}
                 Err(e) => {
                     error!("❌ Commit fetch error: {}", e);
                 }
@@ -94,8 +92,6 @@ async fn fetch_single_commit(
         config.github_api_url, repo_name, sha
     );
     
-    info!("📡 Fetching: {}", url);
-    
     let request = client
         .get(&url)
         .header("Accept", "application/vnd.github+json")
@@ -109,14 +105,15 @@ async fn fetch_single_commit(
     
     let response = request.send().await?;
     
-    info!("📡 Response status: {}", response.status());
+    // Status pehle save karo
+    let status = response.status();
     
-    if response.status().is_success() {
+    if status.is_success() {
         let commit = response.json::<CommitDetail>().await?;
         Ok(Some(commit))
     } else {
         let body = response.text().await?;
-        warn!("❌ GitHub API error: {} - {}", response.status(), body);
+        warn!("❌ GitHub API error: {} - {}", status, body);
         Ok(None)
     }
 }
